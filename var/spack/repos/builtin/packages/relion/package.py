@@ -1,4 +1,4 @@
-# Copyright 2013-2023 Lawrence Livermore National Security, LLC and other
+# Copyright 2013-2022 Lawrence Livermore National Security, LLC and other
 # Spack Project Developers. See the top-level COPYRIGHT file for details.
 #
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
@@ -14,15 +14,17 @@ class Relion(CMakePackage, CudaPackage):
 
     homepage = "http://www2.mrc-lmb.cam.ac.uk/relion"
     git = "https://github.com/3dem/relion.git"
-    url = "https://github.com/3dem/relion/archive/4.0.0.zip"
-    maintainers("dacolombo")
+    url = "https://github.com/3dem/relion/archive/3.1.3.zip"
 
     version("4.0.1", sha256="7e0d56fd4068c99f943dc309ae533131d33870392b53a7c7aae7f65774f667be")
     version("4.0.0", sha256="0987e684e9d2dfd630f1ad26a6847493fe9fcd829ec251d8bc471d11701d51dd")
 
-    # 3.1.4 latest release in 3.1 branch
-    version("3.1.4", sha256="3bf3449bd2d71dc85d2cdbd342e772f5faf793d8fb3cda6414547cf34c98f34c")
-    version("3.1.3", sha256="e67277200b54d1814045cfe02c678a58d88eb8f988091573453c8568bfde90fc")
+    version("3.1.4", sha256="c7b668879fa06bcb854f2f131970d9747320f75b45e335f937bc0d7088bd1c13")
+    version(
+        "3.1.3",
+        sha256="e67277200b54d1814045cfe02c678a58d88eb8f988091573453c8568bfde90fc",
+        preferred=True,
+    )
     version("3.1.2", sha256="dcdf6f214f79a03d29f0fed2de58054efa35a9d8401543bdc52bfb177987931f")
     version("3.1.1", sha256="63e9b77e1ba9ec239375020ad6ff631424d1a5803cba5c608c09fd44d20b1618")
     version("3.1.0", sha256="8a7e751fa6ebcdf9f36046499b3d88e170c4da86d5ff9ad1914b5f3d178867a8")
@@ -58,7 +60,8 @@ class Relion(CMakePackage, CudaPackage):
 
     # these new values were added in relion 3
     # do not seem to cause problems with < 3
-    variant("mklfft", default=True, description="Use MKL rather than FFTW for FFT")
+    # use correct FFT lib depending on target arch
+    variant("mklfft", default=True, description="Use MKL rather than FFTW for FFT", when="target=broadwell:")
     variant(
         "allow_ctf_in_sagd",
         default=True,
@@ -76,8 +79,8 @@ class Relion(CMakePackage, CudaPackage):
 
     depends_on("mpi")
     depends_on("cmake@3:", type="build")
-    depends_on("binutils@2.32:", type="build")
-    depends_on("fftw precision=float,double", when="~mklfft")
+    # changed when from ~mklfft to AMD targets
+    depends_on("fftw precision=float,double", when="target=zen:")
 
     # use the +xft variant so the interface is not so horrible looking
     depends_on("fltk+xft", when="+gui")
@@ -86,11 +89,11 @@ class Relion(CMakePackage, CudaPackage):
     depends_on("libpng", when="@4:")
 
     depends_on("cuda", when="+cuda")
-    depends_on("cuda@9:", when="@3: +cuda")
     depends_on("tbb", when="+altcpu")
-    depends_on("mkl", when="+mklfft")
+    depends_on("intel-mkl@2020.4.304", when="+mklfft")
     depends_on("ctffind", type="run")
     depends_on("motioncor2", type="run", when="+external_motioncor2")
+    depends_on("gctf", type="run")
 
     # TODO: more externals to add
     # Spack packages needed
@@ -110,8 +113,8 @@ class Relion(CMakePackage, CudaPackage):
             "-DGUI=%s" % ("+gui" in self.spec),
             "-DDoublePrec_CPU=%s" % ("+double" in self.spec),
             "-DDoublePrec_GPU=%s" % ("+double-gpu" in self.spec),
-            "-DALLOW_CTF_IN_SAGD=%s" % ("+allow_ctf_in_sagd" in self.spec),
             "-DMKLFFT=%s" % ("+mklfft" in self.spec),
+            "-DALLOW_CTF_IN_SAGD=%s" % ("+allow_ctf_in_sagd" in self.spec),
             "-DALTCPU=%s" % ("+altcpu" in self.spec),
         ]
 
@@ -122,7 +125,13 @@ class Relion(CMakePackage, CudaPackage):
             if carch == "none":
                 raise ValueError("Must select a value for cuda_arch")
             else:
-                args += ["-DCUDA=ON", "-DCudaTexture=ON", "-DCUDA_ARCH=%s" % (carch)]
+                args += [
+                    "-DBUILD_WITH_CUDA_CUB=ON"
+                    "-DUSE_CUDA=ON"
+                    "-DCUDA=ON",
+                    "-DCudaTexture=ON",
+                    "-DCUDA_ARCH=%s" % (carch),
+                ]
 
         return args
 
@@ -140,6 +149,24 @@ class Relion(CMakePackage, CudaPackage):
         filter_file(
             r"(#define DEFAULTCTFFINDLOCATION).*",
             r'\1 "{0}"'.format(join_path(self.spec["ctffind"].prefix.bin, "ctffind")),
+            join_path("src", "pipeline_jobs.h"),
+        )
+
+        filter_file(
+            r"(#define DEFAULTGCTFLOCATION).*",
+            r'\1 "{0}"'.format(join_path(self.spec["gctf"].prefix.bin, "gctf")),
+            join_path("src", "pipeline_jobs.h"),
+        )
+
+        filter_file(
+            r"(#define DEFAULTQSUBCOMMAND).*",
+            r'\1 "{0}"'.format("sbatch"),
+            join_path("src", "pipeline_jobs.h"),
+        )
+
+        filter_file(
+            r"(#define DEFAULTQUEUENAME).*",
+            r'\1 "{0}"'.format("atherton_gpu"),
             join_path("src", "pipeline_jobs.h"),
         )
 
